@@ -1,0 +1,12 @@
+{
+  "name": "@openclaw/paloa-pipeline",
+  "version": "2026.3.6",
+  "private": true,
+  "description": "Paloa pipeline optimizer extension for OpenClaw",
+  "type": "module",
+  "openclaw": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  }
+}

@@ -1,0 +1,38 @@
+{
+  "id": "paloa-pipeline",
+  "name": "Paloa Pipeline Optimizer",
+  "description": "Semi-autonomous basketball shot detection pipeline optimization. Runs experiments, evaluates against ground truth, and suggests config improvements.",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "workspaceDir": {
+        "type": "string",
+        "description": "Path to paloa-film-analytics repo root"
+      },
+      "pythonPath": {
+        "type": "string",
+        "description": "Path to Python 3.11+ binary",
+        "default": "python3"
+      },
+      "maxCostUsd": {
+        "type": "number",
+        "description": "Maximum total cost budget for optimization runs (in USD)",
+        "default": 20
+      },
+      "targets": {
+        "type": "object",
+        "properties": {
+          "recall": { "type": "number", "default": 0.85 },
+          "precision": { "type": "number", "default": 0.9 },
+          "f1": { "type": "number", "default": 0.85 }
+        }
+      },
+      "costPerRun": {
+        "type": "number",
+        "description": "Estimated cost per quad pipeline run in USD",
+        "default": 0.4
+      }
+    }
+  }
+}
