@@ -1,5 +1,5 @@
 /** Formatting, retry, and idempotency policy for direct cron delivery. */
-import type { ReplyPayload } from "../../auto-reply/reply-payload.js";
+import { copyReplyPayloadMetadata, type ReplyPayload } from "../../auto-reply/reply-payload.js";
 import {
   SILENT_REPLY_TOKEN,
   startsWithSilentToken,
@@ -244,12 +244,30 @@ export function prependStaleCronDeliveryNotice(
 ): ReplyPayload[] {
   const firstTextIndex = payloads.findIndex((p) => p.text?.trim());
   const firstTextPayload = payloads[firstTextIndex];
-  return firstTextIndex === -1 || !firstTextPayload
-    ? [{ text: notice }, ...payloads]
-    : payloads.with(firstTextIndex, {
-        ...firstTextPayload,
-        text: `${notice}\n\n${firstTextPayload.text}`,
-      });
+  if (firstTextIndex === -1 || !firstTextPayload) {
+    // Media-only batches carry no fallbackText linkage (it needs a text
+    // source), so leading with the notice cannot break linked indices.
+    return [{ text: notice }, ...payloads];
+  }
+  const annotatedText = `${notice}\n\n${firstTextPayload.text}`;
+  return payloads.map((payload, index) => {
+    if (index === firstTextIndex) {
+      // Keep WeakMap speech/presentation facts on the annotated clone; TTS
+      // reads them immediately downstream (tagged mode skips synthesis, and
+      // always mode must speak the authored speech, not the notice).
+      return copyReplyPayloadMetadata(payload, { ...payload, text: annotatedText });
+    }
+    // Channel batch normalizers merge a metadata-only payload into its source
+    // only while payload.text, fallbackText.text, and the source text stay
+    // equal; annotating just the source would send an unannotated duplicate.
+    return payload.fallbackText?.replacesPayloadIndex === firstTextIndex
+      ? copyReplyPayloadMetadata(payload, {
+          ...payload,
+          text: annotatedText,
+          fallbackText: { ...payload.fallbackText, text: annotatedText },
+        })
+      : payload;
+  });
 }
 
 export async function maybeApplyTtsToCronPayloads(params: {
