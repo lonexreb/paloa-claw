@@ -297,7 +297,8 @@ export function readPluginSdkSurfaceBudgets(env: NodeJS.ProcessEnv = process.env
       // +1: resolveManagedResourceStateDir keeps plugin-managed model caches and binaries on the operator root during redirected agent exec.
       // +2: shared SystemOne question encoder and response decoder on the Decisions facade.
       // +4: capability-aware auth context and transport model types in core/plugin-entry.
-      3822,
+      // +3: bounded command-status projection types (#76759).
+      3825,
       env,
     ),
     publicFunctionExports: readPluginSdkSurfaceBudgetEnv(
