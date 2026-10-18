@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { HeartbeatStatus, SessionStatus, StatusSummary } from "../status/types.js";
+import type { StatusSummary } from "../status/summary.js";
+import type { HeartbeatStatus, SessionStatus } from "../status/types.js";
 import type {
   StatusHeartbeat,
   StatusSessionRow,
