@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
@@ -155,9 +154,9 @@ export async function repairLaunchAgentEnvFileJsonQuotes(
     return null;
   }
   // This file carries live service credentials: keep a recovery copy and
-  // publish atomically so an interrupted write can never leave the next
-  // service start without its complete environment (temp + rename, matching
-  // the plist publication above). The recovery copy survives on failure.
+  // publish through the service-file publication owner so the replace is
+  // atomic and fsynced, and a concurrent `openclaw update` service rewrite
+  // (update authority) refuses the repair. The recovery copy survives failure.
   const recoveryPath = `${file.envFilePath}.openclaw-repair-backup`;
   try {
     await fs.writeFile(recoveryPath, file.content, {
@@ -170,16 +169,21 @@ export async function repairLaunchAgentEnvFileJsonQuotes(
       { cause: error },
     );
   }
-  const temporaryPath = `${file.envFilePath}.openclaw-${randomUUID()}.tmp`;
   try {
-    await fs.writeFile(temporaryPath, healedContent, {
-      encoding: "utf8",
-      flag: "wx",
+    await publishServiceFile({
+      filePath: file.envFilePath,
+      contents: healedContent,
       mode: LAUNCH_AGENT_ENV_FILE_MODE,
+      beforeRename: async () => {
+        // A concurrent installer may have republished the env file since the
+        // scan; healing those stale bytes would clobber the newer write.
+        const current = await fs.readFile(file.envFilePath, "utf8").catch(() => null);
+        if (current !== file.content) {
+          throw new Error("service env file changed while the repair was staged; re-run doctor");
+        }
+      },
     });
-    await fs.rename(temporaryPath, file.envFilePath);
   } catch (error) {
-    await fs.rm(temporaryPath, { force: true }).catch(() => {});
     throw new Error(
       `service env repair failed before publishing; original preserved at ${recoveryPath}: ${String(error)}`,
       { cause: error },
