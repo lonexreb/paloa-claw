@@ -63,9 +63,8 @@ export async function runGatewayServicesHealth(ctx: DoctorHealthFlowContext): Pr
     maybeResolveDuelingSystemdGatewayScopes,
     maybeScanExtraGatewayServices,
   } = await import("../commands/doctor-gateway-services.js");
-  const { maybeRepairMacGatewayServiceEnvQuotes, noteMacGatewayPlatformWarnings } = await import(
-    "../commands/doctor-platform-notes.js"
-  );
+  const { maybeRepairMacGatewayServiceEnvQuotes, noteMacGatewayPlatformWarnings } =
+    await import("../commands/doctor-platform-notes.js");
   await maybeScanExtraGatewayServices(ctx.options, ctx.runtime, ctx.prompter);
   await maybeResolveDuelingSystemdGatewayScopes(ctx.runtime, ctx.prompter);
   ctx.cfg = await maybeRepairGatewayServiceConfig(
