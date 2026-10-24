@@ -251,18 +251,6 @@ export async function maybeRepairMacGatewayServiceEnvQuotes(params: {
   }
 }
 
-async function resolveGatewayServiceEnvForPlatformNotes(): Promise<NodeJS.ProcessEnv> {
-  const baseEnv = process.env;
-  const service = resolveGatewayService();
-  const command = await service.readCommand(baseEnv).catch(() => null);
-  return command?.environment
-    ? {
-        ...baseEnv,
-        ...command.environment,
-      }
-    : baseEnv;
-}
-
 export async function collectGatewayPlatformWarnings(
   cfg: OpenClawConfig,
 ): Promise<readonly string[]> {
