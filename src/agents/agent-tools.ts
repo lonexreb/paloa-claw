@@ -55,6 +55,7 @@ import {
   getActiveAgentRingZeroTools,
   mergeAgentRingZeroTools,
 } from "./agent-tools.ring-zero-context.js";
+import { resolveSessionEventBundleMcpAllow } from "./agent-tools.session-event-policy.js";
 import { isSchedulerSystemTurn, resolveTurnToolSurface } from "./agent-tools.turn-authority.js";
 import type { AnyAgentTool } from "./agent-tools.types.js";
 import { resolveAutomationsRunScope } from "./automations-run-scope.js";
@@ -662,6 +663,11 @@ function* assembleOpenClawCodingTools(
       sessionEventSourcePolicy: options?.sessionEventSourcePolicy ?? {
         toolsAllow: [
           ...finalizedTools.filter(turnAuthorized).map((tool) => tool.name),
+          ...resolveSessionEventBundleMcpAllow({
+            capabilityProfile,
+            config: options?.config,
+            runtimeToolAllowlist: options?.runtimeToolAllowlist,
+          }),
           // Provider-hosted search has no function tool; keep this turn's decision for it.
           ...(!finalizedTools.some((tool) => tool.name === "web_search") &&
           isConversationToolAllowed(capabilityProfile, "web_search")
