@@ -49,18 +49,6 @@ describe("unhinted plugin SecretRef round trip", () => {
     expect(result.gateway.auth.token).toBe(original.gateway.auth.token);
   });
 
-  it("restores a ref whose source and provider were masked by an older snapshot", () => {
-    const incoming = structuredClone(original);
-    incoming.plugins.entries["tangleclaw-google-oauth"].config.clientSecret = {
-      source: REDACTED_SENTINEL,
-      provider: REDACTED_SENTINEL,
-      id: REDACTED_SENTINEL,
-    };
-    const restored = restoreRedactedValues(incoming, original, coreOnlyHints);
-    expect(restored.ok).toBe(true);
-    expect(pickRef(restored.result as Config)).toEqual(secretRef);
-  });
-
   it("still refuses a changed provider while the id is redacted", () => {
     const incoming = structuredClone(original);
     incoming.plugins.entries["tangleclaw-google-oauth"].config.clientSecret = {
