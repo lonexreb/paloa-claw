@@ -513,7 +513,8 @@ function collectExecRuntimeFindings(
     const resolved = resolveExecDefaults({
       cfg,
       ...(agentId === undefined ? { scope: { kind: "defaults" as const } } : { agentId }),
-      sandboxAvailable: resolveSandboxConfigForAgent(cfg, agentId).mode !== "off",
+      // Non-main mode leaves each agent's main session on the host.
+      sandboxAvailable: resolveSandboxConfigForAgent(cfg, agentId).mode === "all",
       execApprovals: approvals,
     });
     // Explicit full trust or switched-off approvals is an operator choice worth a

@@ -32,19 +32,6 @@ const fsToolsDisabled = () => ({
   deny: ["write", "edit", "apply_patch"],
 });
 
-function hasFinding(
-  checkId:
-    | "tools.exec.auto_allow_skills_enabled"
-    | "tools.exec.allowlist_interpreter_without_strict_inline_eval"
-    | "security.exposure.open_channels_with_exec"
-    | "tools.exec.security_full_configured"
-    | "tools.exec.fs_tools_disabled_but_exec_enabled",
-  severity: "warn" | "critical",
-  findings: SecurityAuditFinding[],
-) {
-  return findings.some((finding) => finding.checkId === checkId && finding.severity === severity);
-}
-
 function requireFinding(
   findings: SecurityAuditFinding[],
   checkId: string,
@@ -56,6 +43,11 @@ function requireFinding(
   );
   expect(finding).toMatchObject(expected);
   return finding;
+}
+function expectPresence(findings: SecurityAuditFinding[], checkId: string, present: boolean) {
+  expect(
+    findings.some((finding) => finding.checkId === checkId && finding.severity === "warn"),
+  ).toBe(present);
 }
 
 describe("security audit exec surface findings", () => {
@@ -79,12 +71,7 @@ describe("security audit exec surface findings", () => {
   });
 
   it("warns when exec approvals enable autoAllowSkills", async () => {
-    saveExecApprovals({
-      version: 1,
-      defaults: { autoAllowSkills: true },
-      agents: {},
-    });
-
+    saveExecApprovals({ version: 1, defaults: { autoAllowSkills: true }, agents: {} });
     requireFinding(await collectSecurityAuditFindings({}), "tools.exec.auto_allow_skills_enabled", {
       severity: "warn",
     });
@@ -99,16 +86,14 @@ describe("security audit exec surface findings", () => {
       agents: { ops: { allowlist: [{ pattern: "/usr/bin/python3" }] } },
     });
 
-    expect(
-      hasFinding(
-        "tools.exec.allowlist_interpreter_without_strict_inline_eval",
-        "warn",
-        await collectSecurityAuditFindings({
-          agents: { entries: { ops } },
-          tools: { exec: { strictInlineEval: true } },
-        }),
-      ),
-    ).toBe(warns);
+    expectPresence(
+      await collectSecurityAuditFindings({
+        agents: { entries: { ops } },
+        tools: { exec: { strictInlineEval: true } },
+      }),
+      "tools.exec.allowlist_interpreter_without_strict_inline_eval",
+      warns,
+    );
   });
 
   it.each([
@@ -116,19 +101,22 @@ describe("security audit exec surface findings", () => {
     [{ slack: { dmPolicy: "open" } }, { mode: "full" }, "critical"],
   ] as const)("reports open channel exec exposure: %j", async (channels, exec, severity) => {
     const findings = await collectSecurityAuditFindings({ channels, tools: { exec } });
-    expect(hasFinding("security.exposure.open_channels_with_exec", severity, findings)).toBe(true);
+    requireFinding(findings, "security.exposure.open_channels_with_exec", { severity });
     if (severity === "critical") {
-      expect(hasFinding("tools.exec.security_full_configured", severity, findings)).toBe(true);
+      requireFinding(findings, "tools.exec.security_full_configured", { severity });
     }
   });
 
   // #183541: the audit must judge host exec the way the runtime runs it. An
   // unsandboxed agent with unset security runs security=full, ask=off.
-  const defaultFullAgents = (researcher?: { tools: { exec: { ask: "off" } } }) => ({
+  const defaultFullAgents = (
+    researcher?: { tools: { exec: { ask: "off" } } },
+    sandbox?: { mode: "non-main" | "all" },
+  ) => ({
     tools: { exec: { strictInlineEval: true } },
     agents: {
       ownership: "explicit" as const,
-      defaults: { systemAgent: { agentId: "main" } },
+      defaults: { systemAgent: { agentId: "main" }, sandbox },
       entries: {
         main: { tools: { exec: { mode: "ask" as const } } },
         researcher: { workspace: "/tmp/ws-researcher", ...researcher },
@@ -144,35 +132,54 @@ describe("security audit exec surface findings", () => {
     );
   });
 
-  it("reports an unsandboxed agent whose only exec setting disables approvals", async () => {
-    const findings = await collectSecurityAuditFindings(
-      defaultFullAgents({ tools: { exec: { ask: "off" } } }),
-    );
-    const finding = requireFinding(findings, "tools.exec.security_full_configured", {
-      severity: "warn",
-    });
-    expect(finding.detail).toContain("researcher");
-  });
+  it.each([undefined, { mode: "non-main" }] as const)(
+    "reports host exec with disabled approvals (sandbox=%j)",
+    async (sandbox) => {
+      const findings = await collectSecurityAuditFindings(
+        defaultFullAgents({ tools: { exec: { ask: "off" } } }, sandbox),
+      );
+      const finding = requireFinding(findings, "tools.exec.security_full_configured", {
+        severity: "warn",
+      });
+      expect(finding.detail).toContain("researcher");
+    },
+  );
 
   it.each([
-    ["bare default", undefined],
-    ["ask off", { tools: { exec: { ask: "off" as const } } }],
+    ["bare default", undefined, undefined],
+    ["ask off", { tools: { exec: { ask: "off" as const } } }, undefined],
+    ["non-main sandbox", undefined, { mode: "non-main" }],
   ] as const)(
     "rates open DMs reaching a default-full agent as critical (%s)",
-    async (_name, researcher) => {
+    async (_name, researcher, sandbox) => {
       const findings = await collectSecurityAuditFindings({
-        ...defaultFullAgents(researcher),
+        ...defaultFullAgents(researcher, sandbox),
         channels: { telegram: { dmPolicy: "open", allowFrom: ["*"] } },
       });
       const exposure = requireFinding(findings, "security.exposure.open_channels_with_exec", {
         severity: "critical",
       });
       expect(exposure.detail).toContain("researcher: security=full");
-      expect(hasFinding("tools.exec.security_full_configured", "critical", findings)).toBe(
-        researcher !== undefined,
-      );
+      expect(
+        findings.some(
+          (finding) =>
+            finding.checkId === "tools.exec.security_full_configured" &&
+            finding.severity === "critical",
+        ),
+      ).toBe(researcher !== undefined);
     },
   );
+
+  it("does not report full exec when every session is sandboxed", async () => {
+    const findings = await collectSecurityAuditFindings({
+      ...defaultFullAgents({ tools: { exec: { ask: "off" } } }, { mode: "all" }),
+      channels: { telegram: { dmPolicy: "open", allowFrom: ["*"] } },
+    });
+    expect(
+      findings.some((finding) => finding.checkId === "tools.exec.security_full_configured"),
+    ).toBe(false);
+    requireFinding(findings, "security.exposure.open_channels_with_exec", { severity: "warn" });
+  });
 
   it("uses configured plugin and selected channel policies throughout the audit", async () => {
     const stateDir = path.join(process.env.OPENCLAW_HOME!, ".openclaw");
@@ -188,10 +195,6 @@ describe("security audit exec surface findings", () => {
           extensions: ["./index.js"],
           channel: {
             id: "audit-fixture",
-            label: "Audit fixture",
-            selectionLabel: "Audit fixture",
-            docsPath: "/channels/audit-fixture",
-            blurb: "Synthetic audit metadata",
             doctorCapabilities: { dmAllowFromMode: "nestedOnly" },
           },
         },
@@ -258,9 +261,8 @@ describe("security audit exec surface findings", () => {
   });
 
   it("reports canonical agent paths for filesystem policy drift", async () => {
-    const tools = fsToolsDisabled();
     const findings = await collectSecurityAuditFindings({
-      agents: { entries: { ops: { tools } } },
+      agents: { entries: { ops: { tools: fsToolsDisabled() } } },
     });
     requireFinding(findings, "tools.exec.fs_tools_disabled_but_exec_enabled", {
       detail: expect.stringContaining("agents.entries.ops.tools"),
@@ -269,15 +271,11 @@ describe("security audit exec surface findings", () => {
 
   it("does not warn when sandbox filesystem policy constrains exec", async () => {
     const findings = await collectSecurityAuditFindings({
-      agents: {
-        defaults: { sandbox: { mode: "all", workspaceAccess: "ro" } },
-      },
+      agents: { defaults: { sandbox: { mode: "all", workspaceAccess: "ro" } } },
       tools: fsToolsDisabled(),
     });
 
-    expect(hasFinding("tools.exec.fs_tools_disabled_but_exec_enabled", "warn", findings)).toBe(
-      false,
-    );
+    expectPresence(findings, "tools.exec.fs_tools_disabled_but_exec_enabled", false);
   });
 
   async function registryFixture() {
@@ -320,7 +318,6 @@ describe("security audit exec surface findings", () => {
       agents: { entries: { main: {} } },
       tools: { elevated: { allowFrom: { whatsapp: ["*"] } } },
     });
-
     requireFinding(findings, "tools.elevated.allowFrom.whatsapp.wildcard", {
       severity: "critical",
     });
@@ -395,6 +392,7 @@ describe("security audit exec surface findings", () => {
     const dangerousDetail = (detail: string) =>
       expect.objectContaining({
         checkId,
+        severity: "warn",
         detail: expect.stringContaining(detail),
       });
     const suppression = { checkId, detailIncludes: gmailFlag, reason: "test suppression" };
