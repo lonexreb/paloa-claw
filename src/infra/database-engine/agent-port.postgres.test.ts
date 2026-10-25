@@ -108,6 +108,34 @@ describe.skipIf(!connection)("agent database port", () => {
     expect(await rows("SELECT 1 FROM pg_namespace WHERE nspname = $1", [namespace])).toEqual([]);
   });
 
+  it("commits planner statistics for every ported table instead of waiting for autovacuum", async () => {
+    const descriptor = await agentPortProvider.loadDescriptor();
+    using source = openNodeSqliteDatabase(":memory:");
+    source.exec(descriptor.sqlite);
+    const insert = source.prepare(
+      "INSERT INTO cache_entries (scope, key, value_json, updated_at) VALUES ('planner', ?, '{}', 1)",
+    );
+    for (let index = 0; index < 500; index += 1) {
+      insert.run(`key-${index}`);
+    }
+    const namespace = `agent_stats_${randomUUID().replaceAll("-", "")}`;
+    namespaces.add(namespace);
+    await port(sqlite(source), pg(namespace), descriptor, randomUUID());
+    // reltuples = -1 marks a table PostgreSQL has never analyzed; the port's own
+    // ANALYZE commits with the data so the first queries plan on real counts.
+    const unanalyzed = await rows<{ relname: string }>(
+      "SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = $1 AND c.relkind = 'r' AND c.reltuples < 0 ORDER BY c.relname",
+      [namespace],
+    );
+    expect(unanalyzed).toEqual([]);
+    expect(
+      await rows<{ reltuples: number }>(
+        "SELECT c.reltuples::int AS reltuples FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = $1 AND c.relname = 'cache_entries'",
+        [namespace],
+      ),
+    ).toEqual([{ reltuples: 500 }]);
+  });
+
   it("ports lazy raw and compressed predicates through the verified command into readable PostgreSQL history", async () => {
     await withOpenClawTestState(
       { scenario: "minimal", prefix: "agent-port-lazy-" },

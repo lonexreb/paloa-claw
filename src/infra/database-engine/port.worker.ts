@@ -452,6 +452,19 @@ async function catalogEvidence(
   }));
 }
 
+async function analyzePostgresNamespace(endpoint: Extract<Endpoint, { engine: "postgres" }>) {
+  const tables = (
+    await endpoint.db.query<{ relname: string }>(
+      "SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = $1 AND c.relkind IN ('r', 'p') ORDER BY c.relname",
+      [endpoint.namespace],
+    )
+  ).rows;
+  // openclaw_schema_meta already exists here, so the list is never empty.
+  await endpoint.db.query(
+    `ANALYZE ${tables.map(({ relname }) => `${quote(endpoint.namespace)}.${quote(relname)}`).join(", ")}`,
+  );
+}
+
 async function referenceCatalog(
   endpoint: Extract<Endpoint, { engine: "postgres" }>,
   descriptor: PortDescriptor,
@@ -676,6 +689,10 @@ export async function materializeDatabasePort(params: {
         descriptor.version,
         params.storeId,
       ]);
+      // Autovacuum sees the bulk load only after COMMIT, so the first queries
+      // after cutover (and the verification scan below) would plan on default
+      // estimates. ANALYZE is transactional; the statistics commit with the rows.
+      await analyzePostgresNamespace(destination);
     } else {
       for (const trigger of descriptor.triggers ?? []) {
         destination.db.exec(trigger.sql);

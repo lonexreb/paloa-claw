@@ -551,7 +551,9 @@ All destination stores are privately migrated and verified before publication.
 Agent and shared-state columns normally created on a feature's first use are
 completed in the private copy when absent, preserving existing rows with `NULL`
 values and leaving the original SQLite store unchanged. Unknown columns still
-refuse the port.
+refuse the port. PostgreSQL destinations are analyzed inside the port
+transaction, so planner statistics commit with the copied rows instead of
+waiting for autovacuum after cutover.
 The command replaces each store atomically, switches config last while preserving
 SecretRefs, environment references, and includes, then archives its completed
 manifest with the captures. After success, start the Gateway through its service
