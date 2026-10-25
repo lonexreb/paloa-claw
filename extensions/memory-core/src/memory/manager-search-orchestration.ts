@@ -531,6 +531,13 @@ export abstract class MemorySearchOrchestration extends MemorySearchRetrieval {
         }
       }
       const hasVector = queryVec.some((v) => v !== 0);
+      if (!hasVector) {
+        // The provider answered with no signal; vector recall is skipped, so say so
+        // instead of returning keyword-only results silently.
+        log.warn(
+          `memory search: query embedding from ${semanticProvider.id} is all zeros; vector recall skipped, using keyword-only results`,
+        );
+      }
       const vector = hasVector
         ? await this.searchVector(
             queryVec,
