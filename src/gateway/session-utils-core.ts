@@ -229,14 +229,19 @@ export function resolveSessionChildOwners(params: {
     (parsed?.rest.startsWith("subagent:") ||
       (Boolean(entry.spawnedBy) && (entry.spawnDepth ?? 0) > 0));
   const controller = resolveSessionChildController(key, entry);
+  // A promoted sidebar root keeps its transcript lineage but left its former
+  // parent's navigation subtree, so that lineage no longer carries activity or
+  // child links upward; a live controller still owns the run.
+  const promoted = entry.sidebarRoot === true;
   // Native lineage is a durable relationship, not a retained-run lease. Saved
   // dashboard navigation keeps its existing lifetime. Other store-only rows
   // retain the bounded fallback rather than acquiring permanent authority.
   const explicitParent =
-    native || keep || parsed?.rest.startsWith("dashboard:")
+    !promoted && (native || keep || parsed?.rest.startsWith("dashboard:"))
       ? normalizeOptionalString(entry.parentSessionKey)
       : undefined;
-  const spawner = native || keep ? normalizeOptionalString(entry.spawnedBy) : undefined;
+  const spawner =
+    !promoted && (native || keep) ? normalizeOptionalString(entry.spawnedBy) : undefined;
   // Modern explicit lineage remains readable during foreign control. Legacy
   // spawnedBy-only facts yield to a verified active controller. Neither grants
   // permission to take over that execution (delivery checks the current owner).
