@@ -492,22 +492,14 @@ function maybeRestoreSecretRefId(params: {
     );
   }
 
-  // Heuristic redaction (no schema hint for the path, as with a plugin that does
-  // not declare its secret) masks source and provider too; a fully masked ref is
-  // the unchanged original being sent back, not a backend change.
+  const restored = { ...incomingObj, id: originalObj.id };
+  // Unhinted secret objects also mask their identity fields during heuristic redaction.
   if (incomingObj.source === REDACTED_SENTINEL && incomingObj.provider === REDACTED_SENTINEL) {
-    return {
-      handled: true,
-      value: {
-        ...incomingObj,
-        source: originalObj.source,
-        provider: originalObj.provider,
-        id: originalObj.id,
-      },
-    };
+    restored.source = originalObj.source;
+    restored.provider = originalObj.provider;
   }
 
-  if (incomingObj.source !== originalObj.source || incomingObj.provider !== originalObj.provider) {
+  if (restored.source !== originalObj.source || restored.provider !== originalObj.provider) {
     // Changing source/provider while keeping a redacted id would silently bind the old secret id to
     // a different backend. Require an explicit id for that edit.
     throw new RedactionError(
@@ -516,7 +508,7 @@ function maybeRestoreSecretRefId(params: {
     );
   }
 
-  return { handled: true, value: { ...incomingObj, id: originalObj.id } };
+  return { handled: true, value: restored };
 }
 
 type RedactedArrayIdentity = {

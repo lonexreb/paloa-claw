@@ -43,10 +43,7 @@ describe("unhinted plugin SecretRef round trip", () => {
     incoming.commands.bash = true;
     const restored = restoreRedactedValues(incoming, original, hints);
     expect(restored.ok).toBe(true);
-    const result = restored.result as Config;
-    expect(pickRef(result)).toEqual(secretRef);
-    expect(result.commands.bash).toBe(true);
-    expect(result.gateway.auth.token).toBe(original.gateway.auth.token);
+    expect(restored.result).toEqual({ ...original, commands: { bash: true } });
   });
 
   it("still refuses a changed provider while the id is redacted", () => {
