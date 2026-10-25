@@ -3,10 +3,23 @@ import { resolveSessionChildController, resolveSessionChildOwners } from "./sess
 import { projectGatewaySessionRunState } from "./session-utils-display.js";
 import type { projectSessionRowChildLinks } from "./session-utils-projection.js";
 
+/**
+ * A promoted sidebar root keeps its lineage (ownership and tool access are
+ * unchanged) but left this navigation subtree, so only a live controller on the
+ * row still shows it there or folds its activity into the row.
+ */
+export function isChildPromotedAwayFrom(
+  rowKey: string,
+  key: string,
+  entry: NonNullable<ReturnType<typeof projectSessionRowChildLinks>>[number]["entry"],
+): boolean {
+  return entry.sidebarRoot === true && resolveSessionChildController(key, entry) !== rowKey;
+}
+
 /** Child links a presented row lists, and whether any of them is still running. */
 export function presentSessionRowChildren(params: {
   rowKey: string;
-  childLinks: Readonly<ReturnType<typeof projectSessionRowChildLinks>>;
+  childLinks: Readonly<ReturnType<typeof projectSessionRowChildLinks>> | undefined;
   excludedChildKeys?: ReadonlySet<string>;
   now: number;
   rowContext: Pick<
@@ -20,10 +33,7 @@ export function presentSessionRowChildren(params: {
     if (params.excludedChildKeys?.has(key)) {
       return [];
     }
-    // A promoted sidebar root keeps its lineage (ownership and tool access are
-    // unchanged) but left this navigation subtree, so only a live controller
-    // still shows it here or folds its activity into this row.
-    if (entry.sidebarRoot === true && resolveSessionChildController(key, entry) !== rowKey) {
+    if (isChildPromotedAwayFrom(rowKey, key, entry)) {
       return [];
     }
     const childActive = projectGatewaySessionRunState({ key, entry, parsedKey, now, rowContext })

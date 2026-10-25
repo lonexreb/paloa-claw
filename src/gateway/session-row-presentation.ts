@@ -51,6 +51,7 @@ import {
   projectGatewaySessionActiveRun,
   projectGatewaySessionRunState,
 } from "./session-utils-display.js";
+import { isChildPromotedAwayFrom } from "./session-utils-row-children.js";
 import type { GatewaySessionRow, SessionsListResult } from "./session-utils.types.js";
 
 type PresentationOptions = Readonly<
@@ -499,7 +500,8 @@ export function prepareProjectedSessionPresentation(
         facts.push(
           key,
           childActive,
-          entry.sidebarRoot === true,
+          // Live control decides whether a promoted child still belongs here.
+          isChildPromotedAwayFrom(record.key, key, entry),
           resolveSessionChildOwners({
             key,
             entry,
