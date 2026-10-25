@@ -1,10 +1,12 @@
 import { expect, it } from "vitest";
+import { buildSubagentSessionListReadIndex } from "../agents/subagents/registry/subagent-registry-read.js";
 import * as subagents from "../agents/subagents/registry/subagent-registry.test-helpers.js";
 import { setRuntimeConfigSnapshot } from "../config/runtime-snapshot.js";
 import { replaceSessionEntry } from "../config/sessions/session-accessor.js";
 import { claimAgentRunContext, releaseAgentRunContext } from "../infra/agent-run-registry.js";
 import { withOpenClawTestState } from "../test-utils/openclaw-test-state.js";
 import { createResidentSessionRowReader } from "./session-row-projection.test-support.js";
+import { resolveSessionChildOwners } from "./session-utils-core.js";
 
 // #183389: promoting a forked conversation to the sidebar top level keeps its
 // transcript lineage (parentSessionKey) but must stop its subtree's activity
@@ -31,16 +33,14 @@ it.each([
           { agentId: "main", sessionKey: formerParent, env },
           { sessionId: "former-parent", updatedAt: now, status: "done" },
         );
-        await replaceSessionEntry(
-          { agentId: "main", sessionKey: child, env },
-          {
-            sessionId: "promoted-child",
-            updatedAt: now,
-            parentSessionKey: formerParent,
-            spawnDepth: 0,
-            ...(promoted ? { sidebarRoot: true } : {}),
-          },
-        );
+        const childEntry = {
+          sessionId: "promoted-child",
+          updatedAt: now,
+          parentSessionKey: formerParent,
+          spawnDepth: 0,
+          ...(promoted ? { sidebarRoot: true } : {}),
+        };
+        await replaceSessionEntry({ agentId: "main", sessionKey: child, env }, childEntry);
         await replaceSessionEntry(
           { agentId: "main", sessionKey: worker, env },
           { sessionId: "worker", updatedAt: now, spawnedBy: child, spawnDepth: 1 },
@@ -69,6 +69,16 @@ it.each([
         } else {
           expect(former).toMatchObject({ hasActiveSubagentRun: true, childSessions: [child] });
         }
+        // Promotion changes placement only: the former parent still owns the
+        // child for tree-scoped session tools and exact access.
+        expect(
+          resolveSessionChildOwners({
+            key: child,
+            entry: childEntry,
+            now,
+            subagentRuns: buildSubagentSessionListReadIndex(now),
+          }),
+        ).toEqual([formerParent]);
       } finally {
         releaseAgentRunContext(runId, claim);
         await reader.dispose();

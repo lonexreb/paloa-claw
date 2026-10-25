@@ -73,7 +73,6 @@ import {
   resolveEstimatedSessionCostUsd,
   readStoreChildSessionLinks,
   type SessionChildLink,
-  resolveSessionChildOwners,
   resolveSessionChildController,
 } from "./session-utils-core.js";
 import {
@@ -87,6 +86,7 @@ import {
   projectSessionRowChildLinks,
   resolveTranscriptUsageFallbacks,
 } from "./session-utils-projection.js";
+import { presentSessionRowChildren } from "./session-utils-row-children.js";
 import { parseGroupKey } from "./session-utils-store.js";
 import type { GatewaySessionRow, SessionListModelCatalog } from "./session-utils.types.js";
 import { projectWorkerPlacementAgentRuntime } from "./worker-environments/placement-session-runtime.js";
@@ -687,39 +687,21 @@ export function presentSessionRow(
   row.estimatedCostUsd =
     source.estimatedCostUsd ??
     asNonNegativeFiniteNumber(source.lightweight ? undefined : usage?.estimatedCostUsd);
-  const children = source.childLinks?.flatMap(({ key, parsedKey, entry: childEntry }) => {
-    if (options.excludedChildKeys?.has(key)) {
-      return [];
-    }
-    const childActive = projectGatewaySessionRunState({
-      key,
-      entry: childEntry,
-      parsedKey,
-      now,
-      rowContext: {
-        subagentRuns,
-        projectedAgentRuns: options.projectedAgentRuns,
-        projectedSubagentActivity: options.projectedSubagentActivity,
-      },
-    }).fields.hasActiveSubagentRun;
-    if (
-      !resolveSessionChildOwners({
-        key,
-        entry: childEntry,
-        parsedKey,
-        now,
-        subagentRuns,
-        hasActiveRun: childActive,
-      }).includes(row.key)
-    ) {
-      return [];
-    }
-    if (childActive) {
-      row.hasActiveSubagentRun = true;
-    }
-    return [key];
+  const children = presentSessionRowChildren({
+    rowKey: row.key,
+    childLinks: source.childLinks,
+    excludedChildKeys: options.excludedChildKeys,
+    now,
+    rowContext: {
+      subagentRuns,
+      projectedAgentRuns: options.projectedAgentRuns,
+      projectedSubagentActivity: options.projectedSubagentActivity,
+    },
   });
-  row.childSessions = children?.length ? children : undefined;
+  if (children.hasActiveChild) {
+    row.hasActiveSubagentRun = true;
+  }
+  row.childSessions = children.childSessions;
   row.activeModelProvider = options.activeModel?.provider;
   row.activeModel = options.activeModel?.model;
   return row;

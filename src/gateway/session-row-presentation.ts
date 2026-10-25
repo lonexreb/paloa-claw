@@ -499,6 +499,7 @@ export function prepareProjectedSessionPresentation(
         facts.push(
           key,
           childActive,
+          entry.sidebarRoot === true,
           resolveSessionChildOwners({
             key,
             entry,
