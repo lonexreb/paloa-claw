@@ -21,6 +21,7 @@ const codingToolNames = ["read", "exec", "process", "write", "web_search"];
 const mcpTool = (name: string) => ({ name, pluginId: "bundle-mcp" });
 const materializedMcpTools = [
   mcpTool("fixture__read"),
+  mcpTool("fixture__readAll"),
   mcpTool("fixture__write"),
   mcpTool("admin__reset"),
 ];
@@ -51,7 +52,7 @@ describe("resolveSessionEventBundleMcpAllow", () => {
     const woken = wokenTurn([...codingToolNames, ...ceiling(withServers, ["exec", "fixture__*"])]);
     expect(ceiling(withServers, ["exec", "fixture__*"])).toEqual(["fixture__*"]);
     expect(woken.createsBundleMcp).toBe(true);
-    expect(woken.mcpTools).toEqual(["fixture__read", "fixture__write"]);
+    expect(woken.mcpTools).toEqual(["fixture__read", "fixture__readAll", "fixture__write"]);
   });
 
   it("keeps an exact-name policy exact", () => {
@@ -100,6 +101,42 @@ describe("resolveSessionEventBundleMcpAllow", () => {
     expect(ceiling(withServers, cap([["*"], ["bundle-mcp"]]))).toEqual(["bundle-mcp"]);
     expect(ceiling(withServers, cap([["fixture__*"], ["admin__*"]]))).toEqual([]);
     expect(ceiling(withServers, cap([["fixture__*"], ["read", "exec"]]))).toEqual([]);
+  });
+
+  it("judges partial globs with the shared runtime matcher", () => {
+    const cap = (members: string[][]) => attachToolAllowlistIntersection([], members);
+    const partial = ceiling(withServers, ["exec", "fixture__read*"]);
+    expect(partial).toEqual(["fixture__read*"]);
+    const woken = wokenTurn([...codingToolNames, ...partial]);
+    expect(woken.createsBundleMcp).toBe(true);
+    expect(woken.mcpTools).toEqual(["fixture__read", "fixture__readAll"]);
+    expect(
+      ceiling(
+        withServers,
+        cap([
+          ["exec", "fixture__read*"],
+          ["exec", "fixture__*"],
+        ]),
+      ),
+    ).toEqual(["fixture__read*"]);
+    expect(
+      ceiling(
+        withServers,
+        cap([
+          ["exec", "fixture__read*"],
+          ["exec", "fixture__write"],
+        ]),
+      ),
+    ).toEqual([]);
+    expect(
+      ceiling(
+        withServers,
+        cap([
+          ["exec", "fixture__read*"],
+          ["exec", "fixture__read"],
+        ]),
+      ),
+    ).toEqual(["fixture__read"]);
   });
 
   it("documents the base-shaped producer policy that lost MCP on every exec wake", () => {
