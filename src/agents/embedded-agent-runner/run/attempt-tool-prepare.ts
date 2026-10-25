@@ -198,6 +198,7 @@ export async function prepareEmbeddedAttemptToolBase(params: {
   const cronCreatorToolAllowlistCaptureRef: CronToolsAllowCaptureRef = {};
   const inheritedToolAllowlist: string[] = [];
   const additionalInheritedToolNamesRef: string[] = [];
+  const sessionEventToolsAllow: string[] = [];
   const generationCleanups: Array<(reason: string) => Promise<void>> = [];
   const retiringGenerations = new Set<Promise<void>>();
   let retiredCleanupFailed = false;
@@ -394,6 +395,7 @@ export async function prepareEmbeddedAttemptToolBase(params: {
         forceMessageTool: attempt.forceMessageTool,
         inheritedToolAllowlistRef: inheritedToolAllowlist,
         additionalInheritedToolNamesRef,
+        sessionEventToolsAllowRef: sessionEventToolsAllow,
         cronCreatorToolAllowlistRef: cronCreatorToolAllowlist,
         cronCreatorToolAllowlistCaptureRef,
         authProfileStore: attempt.authProfileStore,
@@ -532,6 +534,7 @@ export async function prepareEmbeddedAttemptToolBase(params: {
       requireExplicitMessageTarget,
       inheritedToolAllowlist,
       additionalInheritedToolNamesRef,
+      sessionEventToolsAllow,
       localModelLeanEnabled,
       localModelLeanPreserveToolNames,
       replaySafetyOptions,
