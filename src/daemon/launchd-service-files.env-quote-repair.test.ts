@@ -1,9 +1,9 @@
 // Doctor-owned repair for #103804: generated LaunchAgent env files whose
 // values carry a stray JSON quote pair inside the shell quotes.
 import fs from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
+import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
 import {
   detectLaunchAgentEnvFileJsonQuoteKeys,
   repairLaunchAgentEnvFileJsonQuotes,
@@ -11,23 +11,23 @@ import {
 } from "./launchd-service-files.js";
 import type { GatewayServiceEnv } from "./service-types.js";
 
-let tmpDir: string | undefined;
-
-afterEach(async () => {
-  if (tmpDir) {
-    await fs.rm(tmpDir, { recursive: true, force: true });
-    tmpDir = undefined;
-  }
-});
+// Every test directory is tracked, so a test that makes two still cleans both.
+const tempDirs = useAutoCleanupTempDirTracker(afterEach);
+const makeStateDir = async () => await fs.realpath(tempDirs.make("openclaw-envfix-"));
 
 const LABEL = "ai.openclaw.gateway";
+
+/** Repairs exactly what a doctor pass inspected, the only supported order. */
+async function inspectAndRepair(env: GatewayServiceEnv) {
+  const inspected = await detectLaunchAgentEnvFileJsonQuoteKeys(env, LABEL);
+  return inspected ? await repairLaunchAgentEnvFileJsonQuotes(env, LABEL, inspected) : null;
+}
 
 async function writeEnvFile(lines: string[]): Promise<{
   env: GatewayServiceEnv;
   envFilePath: string;
 }> {
-  tmpDir = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-envfix-")));
-  const env = { OPENCLAW_STATE_DIR: tmpDir } as GatewayServiceEnv;
+  const env = { OPENCLAW_STATE_DIR: await makeStateDir() } as GatewayServiceEnv;
   const envFilePath = resolveLaunchAgentEnvFilePath(env, LABEL);
   await fs.mkdir(path.dirname(envFilePath), { recursive: true });
   await fs.writeFile(envFilePath, `${lines.join("\n")}\n`, { encoding: "utf8", mode: 0o600 });
@@ -45,9 +45,9 @@ it("repairs JSON-quote-wrapped values and leaves everything else byte-identical"
   ]);
 
   const detected = await detectLaunchAgentEnvFileJsonQuoteKeys(env, LABEL);
-  expect(detected).toEqual({ envFilePath, keys: ["AWS_REGION"] });
+  expect(detected).toMatchObject({ envFilePath, keys: ["AWS_REGION"] });
 
-  const result = await repairLaunchAgentEnvFileJsonQuotes(env, LABEL);
+  const result = await inspectAndRepair(env);
   expect(result).toEqual({ envFilePath, healedKeys: ["AWS_REGION"] });
 
   const healed = await fs.readFile(envFilePath, "utf8");
@@ -65,7 +65,7 @@ it("repairs JSON-quote-wrapped values and leaves everything else byte-identical"
   const mode = (await fs.stat(envFilePath)).mode & 0o777;
   expect(mode).toBe(0o600);
   // Converged: a second pass finds nothing and leaves the file untouched.
-  expect(await repairLaunchAgentEnvFileJsonQuotes(env, LABEL)).toBeNull();
+  expect(await inspectAndRepair(env)).toBeNull();
 });
 
 it("repairs legacy files that predate the managed-keys metadata", async () => {
@@ -78,7 +78,7 @@ it("repairs legacy files that predate the managed-keys metadata", async () => {
     `export AWS_SECRET_ACCESS_KEY='"legacy-secret"'`,
   ]);
 
-  const result = await repairLaunchAgentEnvFileJsonQuotes(env, LABEL);
+  const result = await inspectAndRepair(env);
   expect(result?.healedKeys).toEqual(["AWS_REGION", "AWS_SECRET_ACCESS_KEY"]);
 
   const healed = await fs.readFile(resolveLaunchAgentEnvFilePath(env, LABEL), "utf8");
@@ -96,7 +96,7 @@ it("strips a fully wrapping quote pair even when the operator meant it literally
     `export OPERATOR_LITERAL='"secret"'`,
   ]);
 
-  const result = await repairLaunchAgentEnvFileJsonQuotes(env, LABEL);
+  const result = await inspectAndRepair(env);
   expect(result?.healedKeys).toEqual(["OPERATOR_LITERAL"]);
 });
 
@@ -109,15 +109,13 @@ it("returns null and leaves clean files untouched", async () => {
   const before = await fs.readFile(envFilePath, "utf8");
 
   expect(await detectLaunchAgentEnvFileJsonQuoteKeys(env, LABEL)).toBeNull();
-  expect(await repairLaunchAgentEnvFileJsonQuotes(env, LABEL)).toBeNull();
+  expect(await inspectAndRepair(env)).toBeNull();
   expect(await fs.readFile(envFilePath, "utf8")).toBe(before);
 });
 
 it("returns null when no env file exists", async () => {
-  tmpDir = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-envfix-")));
-  const env = { OPENCLAW_STATE_DIR: tmpDir } as GatewayServiceEnv;
+  const env = { OPENCLAW_STATE_DIR: await makeStateDir() } as GatewayServiceEnv;
   expect(await detectLaunchAgentEnvFileJsonQuoteKeys(env, LABEL)).toBeNull();
-  expect(await repairLaunchAgentEnvFileJsonQuotes(env, LABEL)).toBeNull();
 });
 
 it("refuses to clobber a concurrent env-file rewrite staged during the repair (#103845)", async () => {
@@ -142,9 +140,7 @@ it("refuses to clobber a concurrent env-file rewrite staged during the repair (#
     return await realWriteFile(file as never, data as never, options as never);
   });
   try {
-    await expect(repairLaunchAgentEnvFileJsonQuotes(env, LABEL)).rejects.toThrow(
-      /changed while the repair was staged/,
-    );
+    await expect(inspectAndRepair(env)).rejects.toThrow(/changed while the repair was staged/);
   } finally {
     spy.mockRestore();
   }
@@ -162,11 +158,37 @@ it("preserves the original file when the atomic publish fails (#103845)", async 
   // temp-file publish deterministically without touching the live file.
   await fs.chmod(path.dirname(envFilePath), 0o500);
   try {
-    await expect(repairLaunchAgentEnvFileJsonQuotes(env, LABEL)).rejects.toThrow(
+    await expect(inspectAndRepair(env)).rejects.toThrow(
       /aborted before any change|original preserved at/,
     );
   } finally {
     await fs.chmod(path.dirname(envFilePath), 0o700);
   }
   expect(await fs.readFile(envFilePath, "utf8")).toBe(before);
+});
+
+it("heals only the bytes doctor inspected, never a file rewritten after the prompt", async () => {
+  const { env, envFilePath } = await writeEnvFile([
+    "# Generated by OpenClaw. Do not edit while the gateway service is installed.",
+    `export AWS_REGION='"us-east-1"'`,
+  ]);
+  const inspected = await detectLaunchAgentEnvFileJsonQuoteKeys(env, LABEL);
+  expect(inspected?.keys).toEqual(["AWS_REGION"]);
+  // While the operator reads the prompt, a reinstall writes a different
+  // (still quote-shaped) value the operator never saw.
+  const rewritten = [
+    "# Generated by OpenClaw. Do not edit while the gateway service is installed.",
+    `export AWS_REGION='"eu-west-1"'`,
+    `export AWS_PROFILE='"prod"'`,
+    "",
+  ].join("\n");
+  await fs.writeFile(envFilePath, rewritten, { encoding: "utf8", mode: 0o600 });
+
+  await expect(repairLaunchAgentEnvFileJsonQuotes(env, LABEL, inspected!)).rejects.toThrow(
+    /changed after doctor inspected it/,
+  );
+  expect(await fs.readFile(envFilePath, "utf8")).toBe(rewritten);
+  expect(await fs.readdir(path.dirname(envFilePath))).not.toContain(
+    `${path.basename(envFilePath)}.openclaw-repair-backup`,
+  );
 });

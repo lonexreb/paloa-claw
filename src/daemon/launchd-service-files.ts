@@ -26,6 +26,7 @@ import { assertNoSystemLaunchDaemonOwnership } from "./launchd-system.js";
 import { formatLine, normalizeWindowsPathSeparators } from "./output.js";
 import { resolveDaemonHomeDir, resolveGatewayStateDir } from "./paths.js";
 import { resolveGatewaySupervisorLogPaths } from "./restart-logs.js";
+import { withGatewayServiceOperationLock } from "./service-operation-lock.js";
 import {
   publishServiceFile,
   matchesServiceFilePublication,
@@ -121,17 +122,24 @@ async function readLaunchAgentEnvFileContent(
   }
 }
 
+/** The inspected env file the operator confirmed; the repair heals only these bytes. */
+export type LaunchAgentEnvFileJsonQuoteInspection = {
+  envFilePath: string;
+  keys: string[];
+  content: string;
+};
+
 /** Reports keys in a generated env file still carrying #103804 quote corruption. */
 export async function detectLaunchAgentEnvFileJsonQuoteKeys(
   env: GatewayServiceEnv,
   label: string,
-): Promise<{ envFilePath: string; keys: string[] } | null> {
+): Promise<LaunchAgentEnvFileJsonQuoteInspection | null> {
   const file = await readLaunchAgentEnvFileContent(env, label);
   if (!file) {
     return null;
   }
   const { keys } = scanGeneratedEnvFileJsonQuotes(file.content);
-  return keys.length > 0 ? { envFilePath: file.envFilePath, keys } : null;
+  return keys.length > 0 ? { envFilePath: file.envFilePath, keys, content: file.content } : null;
 }
 
 /**
@@ -140,15 +148,35 @@ export async function detectLaunchAgentEnvFileJsonQuoteKeys(
  * Detection is shape-based on purpose so legacy files written before the
  * managed-keys metadata existed heal too; callers gate the rewrite on the
  * doctor repair prompt, and the runtime reader stays lossless.
+ *
+ * The repair is bound to the inspection the operator confirmed and runs under
+ * the gateway service-operation lock from capture to publication, so a
+ * service install or update cannot interleave and its bytes are never healed
+ * or clobbered by this rewrite.
  */
 export async function repairLaunchAgentEnvFileJsonQuotes(
   env: GatewayServiceEnv,
   label: string,
+  inspected: LaunchAgentEnvFileJsonQuoteInspection,
 ): Promise<{ envFilePath: string; healedKeys: string[] } | null> {
-  const file = await readLaunchAgentEnvFileContent(env, label);
-  if (!file) {
-    return null;
-  }
+  return await withGatewayServiceOperationLock(env, async (assertCurrent) => {
+    const file = await readLaunchAgentEnvFileContent(env, label);
+    if (!file) {
+      return null;
+    }
+    if (file.envFilePath !== inspected.envFilePath || file.content !== inspected.content) {
+      throw new Error(
+        "service env repair aborted before any change: the file changed after doctor inspected it; re-run doctor",
+      );
+    }
+    return await publishLaunchAgentEnvFileRepair(file, assertCurrent);
+  });
+}
+
+async function publishLaunchAgentEnvFileRepair(
+  file: { envFilePath: string; content: string },
+  assertCurrent: () => void,
+): Promise<{ envFilePath: string; healedKeys: string[] } | null> {
   const { healedContent, keys } = scanGeneratedEnvFileJsonQuotes(file.content);
   if (keys.length === 0) {
     return null;
@@ -175,8 +203,9 @@ export async function repairLaunchAgentEnvFileJsonQuotes(
       contents: healedContent,
       mode: LAUNCH_AGENT_ENV_FILE_MODE,
       beforeRename: async () => {
-        // A concurrent installer may have republished the env file since the
-        // scan; healing those stale bytes would clobber the newer write.
+        assertCurrent();
+        // A writer outside the service lock may have republished the env file
+        // since the scan; healing those stale bytes would clobber the newer write.
         const current = await fs.readFile(file.envFilePath, "utf8").catch(() => null);
         if (current !== file.content) {
           throw new Error("service env file changed while the repair was staged; re-run doctor");

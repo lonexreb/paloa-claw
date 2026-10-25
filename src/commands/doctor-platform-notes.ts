@@ -218,7 +218,7 @@ export async function maybeRepairMacGatewayServiceEnvQuotes(params: {
     }
     let repaired: Awaited<ReturnType<typeof repairLaunchAgentEnvFileJsonQuotes>>;
     try {
-      repaired = await repairLaunchAgentEnvFileJsonQuotes(env, label);
+      repaired = await repairLaunchAgentEnvFileJsonQuotes(env, label, detected);
     } catch (error) {
       // A failed publish must never read as a no-op: the repair keeps the
       // original content in a recovery copy and names it in the error.

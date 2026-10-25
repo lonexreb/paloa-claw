@@ -1,21 +1,16 @@
 // Doctor surfacing + prompt gate for the #103804 generated env quote repair.
 import fs from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
+import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
 import { resolveLaunchAgentEnvFilePath } from "../daemon/launchd-service-files.js";
 import type { GatewayServiceEnv } from "../daemon/service-types.js";
 import { maybeRepairMacGatewayServiceEnvQuotes } from "./doctor-platform-notes.js";
 import type { DoctorPrompter } from "./doctor-prompter.js";
 
-let tmpDir: string | undefined;
-
-afterEach(async () => {
-  if (tmpDir) {
-    await fs.rm(tmpDir, { recursive: true, force: true });
-    tmpDir = undefined;
-  }
-});
+// Every test directory is tracked, so a test that makes two still cleans both.
+const tempDirs = useAutoCleanupTempDirTracker(afterEach);
+const makeStateDir = async () => await fs.realpath(tempDirs.make("openclaw-doctor-envfix-"));
 
 function makePrompter(accept: boolean): DoctorPrompter {
   return { confirmRuntimeRepair: vi.fn(async () => accept) } as unknown as DoctorPrompter;
@@ -24,8 +19,7 @@ function makePrompter(accept: boolean): DoctorPrompter {
 async function seedCorruptedEnvFile(
   label = "ai.openclaw.gateway",
 ): Promise<{ env: NodeJS.ProcessEnv; envFilePath: string }> {
-  tmpDir = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-doctor-envfix-")));
-  const env = { OPENCLAW_STATE_DIR: tmpDir } as NodeJS.ProcessEnv;
+  const env = { OPENCLAW_STATE_DIR: await makeStateDir() } as NodeJS.ProcessEnv;
   const envFilePath = resolveLaunchAgentEnvFilePath(env as GatewayServiceEnv, label);
   await fs.mkdir(path.dirname(envFilePath), { recursive: true });
   await fs.writeFile(
@@ -125,11 +119,10 @@ it("stays silent off darwin and on clean installs", async () => {
   });
   expect(noteFn).not.toHaveBeenCalled();
 
-  tmpDir = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-doctor-envfix-")));
   await maybeRepairMacGatewayServiceEnvQuotes({
     prompter: makePrompter(true),
     platform: "darwin",
-    env: { OPENCLAW_STATE_DIR: tmpDir } as NodeJS.ProcessEnv,
+    env: { OPENCLAW_STATE_DIR: await makeStateDir() } as NodeJS.ProcessEnv,
     noteFn,
   });
   expect(noteFn).not.toHaveBeenCalled();
