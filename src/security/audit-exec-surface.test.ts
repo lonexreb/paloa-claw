@@ -181,6 +181,25 @@ describe("security audit exec surface findings", () => {
     requireFinding(findings, "security.exposure.open_channels_with_exec", { severity: "warn" });
   });
 
+  it("does not invent exec exposure for an explicit fleet whose agents deny exec", async () => {
+    const findings = await collectSecurityAuditFindings({
+      agents: {
+        ownership: "explicit",
+        entries: {
+          main: { tools: { exec: { mode: "deny" } } },
+          researcher: { tools: { exec: { mode: "deny" } } },
+        },
+      },
+      channels: { telegram: { dmPolicy: "open", allowFrom: ["*"] } },
+    });
+    expect(
+      findings.some((finding) => finding.checkId === "security.exposure.open_channels_with_exec"),
+    ).toBe(false);
+    expect(
+      findings.some((finding) => finding.checkId === "tools.exec.security_full_configured"),
+    ).toBe(false);
+  });
+
   it("uses configured plugin and selected channel policies throughout the audit", async () => {
     const stateDir = path.join(process.env.OPENCLAW_HOME!, ".openclaw");
     const pluginDir = path.join(stateDir, "extensions", "audit-fixture");

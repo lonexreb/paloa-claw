@@ -2,8 +2,11 @@ import path from "node:path";
 import { asNullableRecord } from "@openclaw/normalization-core/record-coerce";
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import { normalizeStringEntries } from "@openclaw/normalization-core/string-normalization";
-import { listAgentEntries } from "../agents/agent-scope-config.js";
-import { tryResolveDefaultAgentId } from "../agents/agent-scope.js";
+import {
+  listAgentEntries,
+  listAgentIds,
+  resolveAgentConfig,
+} from "../agents/agent-scope-config.js";
 import { resolveExecDefaults } from "../agents/exec-defaults.js";
 import { resolveSandboxConfigForAgent } from "../agents/sandbox/config.js";
 import type { AnyChannelPlugin as ChannelPlugin } from "../channels/plugins/types.plugin.js";
@@ -483,7 +486,6 @@ function collectExecRuntimeFindings(
   }
 
   const agents = listAgentEntries(cfg).filter((entry) => typeof entry.id === "string");
-  const defaultAgentId = tryResolveDefaultAgentId(cfg);
   const riskyAgents = agents
     .filter(
       (entry) =>
@@ -509,10 +511,11 @@ function collectExecRuntimeFindings(
   // Judge host exec the way the runtime runs it: an unsandboxed scope with no
   // exec settings runs security=full, ask=off (prepareExecDefaults), not deny.
   const defaultsExec = cfg.tools?.exec;
-  const execScope = (id: string, agentId: string | undefined, exec = defaultsExec) => {
+  const effectiveExecScopes = listAgentIds(cfg).map((agentId) => {
+    const exec = resolveAgentConfig(cfg, agentId)?.tools?.exec;
     const resolved = resolveExecDefaults({
       cfg,
-      ...(agentId === undefined ? { scope: { kind: "defaults" as const } } : { agentId }),
+      agentId,
       // Non-main mode leaves each agent's main session on the host.
       sandboxAvailable: resolveSandboxConfigForAgent(cfg, agentId).mode === "all",
       execApprovals: approvals,
@@ -523,16 +526,8 @@ function collectExecRuntimeFindings(
       (exec?.security ?? defaultsExec?.security) === "full" ||
       (exec?.mode ?? defaultsExec?.mode) === "full" ||
       (exec?.ask ?? defaultsExec?.ask) === "off";
-    return { id, security: resolved.security, host: resolved.host, configured };
-  };
-  const effectiveExecScopes = Array.from(
-    new Map(
-      [
-        execScope(defaultAgentId ?? "global", undefined),
-        ...agents.map((entry) => execScope(entry.id, entry.id, entry.tools?.exec)),
-      ].map((entry) => [entry.id, entry] as const),
-    ).values(),
-  );
+    return { id: agentId, security: resolved.security, host: resolved.host, configured };
+  });
   const fullExecScopes = effectiveExecScopes.filter((entry) => entry.security === "full");
   const execEnabledScopes = effectiveExecScopes.filter((entry) => entry.security !== "deny");
 
