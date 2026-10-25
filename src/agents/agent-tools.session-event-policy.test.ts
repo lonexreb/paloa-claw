@@ -7,6 +7,7 @@ import {
   applyEmbeddedAttemptToolsAllow,
   shouldCreateBundleMcpRuntimeForAttempt,
 } from "./embedded-agent-runner/run/attempt-tool-construction-plan.js";
+import { attachToolAllowlistIntersection } from "./tool-policy-shared.js";
 
 const withServers: OpenClawConfig = {
   mcp: {
@@ -77,6 +78,28 @@ describe("resolveSessionEventBundleMcpAllow", () => {
     const woken = wokenTurn([...codingToolNames, ...ceiling(withServers, ["read", "exec"])]);
     expect(woken.createsBundleMcp).toBe(false);
     expect(woken.mcpTools).toEqual([]);
+  });
+
+  it("intersects every restriction member instead of keeping the narrowest one", () => {
+    const cap = (members: string[][]) => attachToolAllowlistIntersection([], members);
+    const reviewer = ceiling(
+      withServers,
+      cap([
+        ["exec", "*"],
+        ["exec", "fixture__read", "fixture__write"],
+      ]),
+    );
+    expect(reviewer).toEqual(["fixture__read", "fixture__write"]);
+    expect(wokenTurn([...codingToolNames, ...reviewer]).mcpTools).toEqual([
+      "fixture__read",
+      "fixture__write",
+    ]);
+    expect(ceiling(withServers, cap([["fixture__*"], ["fixture__read"]]))).toEqual([
+      "fixture__read",
+    ]);
+    expect(ceiling(withServers, cap([["*"], ["bundle-mcp"]]))).toEqual(["bundle-mcp"]);
+    expect(ceiling(withServers, cap([["fixture__*"], ["admin__*"]]))).toEqual([]);
+    expect(ceiling(withServers, cap([["fixture__*"], ["read", "exec"]]))).toEqual([]);
   });
 
   it("documents the base-shaped producer policy that lost MCP on every exec wake", () => {
