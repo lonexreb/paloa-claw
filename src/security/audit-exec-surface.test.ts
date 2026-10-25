@@ -122,6 +122,58 @@ describe("security audit exec surface findings", () => {
     }
   });
 
+  // #183541: the audit must judge host exec the way the runtime runs it. An
+  // unsandboxed agent with unset security runs security=full, ask=off.
+  const defaultFullAgents = (researcher?: { tools: { exec: { ask: "off" } } }) => ({
+    tools: { exec: { strictInlineEval: true } },
+    agents: {
+      ownership: "explicit" as const,
+      defaults: { systemAgent: { agentId: "main" } },
+      entries: {
+        main: { tools: { exec: { mode: "ask" as const } } },
+        researcher: { workspace: "/tmp/ws-researcher", ...researcher },
+      },
+    },
+  });
+
+  it("keeps a bare default-full agent out of security_full_configured without open channels", async () => {
+    const findings = await collectSecurityAuditFindings(defaultFullAgents());
+    expect(findings.some((f) => f.checkId === "tools.exec.security_full_configured")).toBe(false);
+    expect(findings.some((f) => f.checkId === "security.exposure.open_channels_with_exec")).toBe(
+      false,
+    );
+  });
+
+  it("reports an unsandboxed agent whose only exec setting disables approvals", async () => {
+    const findings = await collectSecurityAuditFindings(
+      defaultFullAgents({ tools: { exec: { ask: "off" } } }),
+    );
+    const finding = requireFinding(findings, "tools.exec.security_full_configured", {
+      severity: "warn",
+    });
+    expect(finding.detail).toContain("researcher");
+  });
+
+  it.each([
+    ["bare default", undefined],
+    ["ask off", { tools: { exec: { ask: "off" as const } } }],
+  ] as const)(
+    "rates open DMs reaching a default-full agent as critical (%s)",
+    async (_name, researcher) => {
+      const findings = await collectSecurityAuditFindings({
+        ...defaultFullAgents(researcher),
+        channels: { telegram: { dmPolicy: "open", allowFrom: ["*"] } },
+      });
+      const exposure = requireFinding(findings, "security.exposure.open_channels_with_exec", {
+        severity: "critical",
+      });
+      expect(exposure.detail).toContain("researcher: security=full");
+      expect(hasFinding("tools.exec.security_full_configured", "critical", findings)).toBe(
+        researcher !== undefined,
+      );
+    },
+  );
+
   it("uses configured plugin and selected channel policies throughout the audit", async () => {
     const stateDir = path.join(process.env.OPENCLAW_HOME!, ".openclaw");
     const pluginDir = path.join(stateDir, "extensions", "audit-fixture");
