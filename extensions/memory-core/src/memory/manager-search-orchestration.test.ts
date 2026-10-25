@@ -195,13 +195,30 @@ describe("memory index", () => {
 
     expectFixtureHit(await manager.search("alpha"));
     expect(memoryWarnings.mock.calls.map((call) => String(call[0]))).toEqual([
-      "memory search: query embedding from mock is all zeros; vector recall skipped, using keyword-only results",
+      "memory search: query embedding from mock is all zeros; vector recall skipped, using keyword-only results; check the embedding service and retry",
     ]);
 
     query.mockRestore();
     memoryWarnings.mockClear();
     expectFixtureHit(await manager.search("alpha"));
     expect(memoryWarnings).not.toHaveBeenCalled();
+  });
+
+  it("says the all-zero search returns nothing when no keyword index is available", async () => {
+    const manager = await syncedManager({ provider: "openai", minScore: 0 }, true);
+    const fts = (manager as unknown as { fts: { available: boolean } }).fts;
+    const query = vi.spyOn(provider(manager), "embed").mockResolvedValue([0, 0, 0, 0]);
+    fts.available = false;
+    memoryWarnings.mockClear();
+    try {
+      expect(await manager.search("alpha")).toEqual([]);
+      expect(memoryWarnings.mock.calls.map((call) => String(call[0]))).toEqual([
+        "memory search: query embedding from mock is all zeros; vector recall skipped, no keyword index is available, so this search returns no results; check the embedding service and retry",
+      ]);
+    } finally {
+      fts.available = true;
+      query.mockRestore();
+    }
   });
 
   it("keeps configured provider fallback available after query dimension drift", async () => {
