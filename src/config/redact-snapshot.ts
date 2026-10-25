@@ -492,6 +492,21 @@ function maybeRestoreSecretRefId(params: {
     );
   }
 
+  // Heuristic redaction (no schema hint for the path, as with a plugin that does
+  // not declare its secret) masks source and provider too; a fully masked ref is
+  // the unchanged original being sent back, not a backend change.
+  if (incomingObj.source === REDACTED_SENTINEL && incomingObj.provider === REDACTED_SENTINEL) {
+    return {
+      handled: true,
+      value: {
+        ...incomingObj,
+        source: originalObj.source,
+        provider: originalObj.provider,
+        id: originalObj.id,
+      },
+    };
+  }
+
   if (incomingObj.source !== originalObj.source || incomingObj.provider !== originalObj.provider) {
     // Changing source/provider while keeping a redacted id would silently bind the old secret id to
     // a different backend. Require an explicit id for that edit.
