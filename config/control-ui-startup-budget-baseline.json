@@ -1,5 +1,5 @@
 {
-  "startupJsGzipBytes": 273686,
-  "reason": "Route readiness: 20 interleaved pairs against the original base showed 15.8% faster Settings readiness and 8.3% less task CPU. After merging main 2f95e977, same-host builds compare 272893 to 273686 B startup gzip (+793 B); seven JS requests, one CSS request, and total CSS are unchanged. Set the baseline to the measured head.",
+  "startupJsGzipBytes": 270488,
+  "reason": "Heavy tool details avoid rendering hidden diff/raw views: rejected-patch script CPU -39.07% and main-thread task CPU -47.04% over 20 counterbalanced pairs. Integrated same-toolchain build on f8a97fe: startup 270323 to 270488 B gzip (+165 B), five JS and one CSS request unchanged; Chat -132 B, New +114 B. Accept the small startup tradeoff and ratchet to the measured head.",
   "updatedAt": "2026-10-25"
 }
