@@ -238,9 +238,14 @@ export async function prepareLargeRequesterWakeFixture(
             rearmGeneration: 1,
           }).runId,
           childSessionKey: nestedSessionKey,
+          expectsCompletionMessage: true,
         },
       ]
-    : childIds.map((runId) => ({ runId, childSessionKey: `agent:main:subagent:${runId}` }));
+    : childIds.map((runId) => ({
+        runId,
+        childSessionKey: `agent:main:subagent:${runId}`,
+        expectsCompletionMessage: true,
+      }));
   return { cfg, requesterSessionKey, fixture, children };
 }
 

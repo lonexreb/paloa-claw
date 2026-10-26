@@ -430,16 +430,15 @@ describe("requester settle wake product flow", () => {
           return ordinaryGatewayCall(request);
         },
         async () => {
+          const turnId = "requester-batch";
           for (const child of children) {
-            await fixture.spawnVisibleChild({ ...child, requesterTurnRunId: "requester-batch" });
+            await fixture.spawnVisibleChild({ ...child, requesterTurnRunId: turnId });
           }
           if (children.length > 1) {
-            await createRequesterYieldTool(requesterSessionKey, "requester-batch").execute(
-              "yield",
-              {},
-            );
+            await createRequesterYieldTool(requesterSessionKey, turnId).execute("yield", {});
           }
-          await fixture.settleTurn("requester-batch", children, children.length > 1);
+          const settled = await fixture.settleTurn(turnId, children, children.length > 1);
+          expect(settled.requesterContinuationSettled).toBe(children.length > 1 || undefined);
           for (const [index, child] of children.entries()) {
             emitCompleted(child.runId, child.childSessionKey, `findings ${index}`);
           }
