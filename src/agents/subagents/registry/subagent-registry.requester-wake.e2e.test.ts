@@ -54,7 +54,9 @@ import {
 import {
   createGatewayContext,
   createRequesterWakeSessionFixture,
+  expectLargeRequesterWakeFindings,
   holdRequesterWakeResponses,
+  prepareLargeRequesterWakeFixture,
 } from "./subagent-registry.requester-wake-session.test-support.js";
 import { registerRequesterWakeSettlementBoundaryTests } from "./subagent-registry.requester-wake-settlement.test-support.js";
 import * as registry from "./subagent-registry.test-helpers.js";
@@ -395,6 +397,66 @@ describe("requester settle wake product flow", () => {
     getAgentCalls,
     wakeRequester,
   };
+
+  it.each(["six-child DM batch", "nested three-child completion"])(
+    "delivers a %s with execution-identity collection enabled",
+    async (scenario) => {
+      const { cfg, requesterSessionKey, fixture, children } =
+        await prepareLargeRequesterWakeFixture(
+          { sessionStore, sessionStorePath },
+          scenario === "nested three-child completion",
+        );
+      const { waitForDeliveredCleanup: waitForBatchCleanup } =
+        createLifecycleWaits(requesterSessionKey);
+      const admittedRunIds: string[] = [];
+      const admissionErrors: string[] = [];
+      const ordinaryGatewayCall = callGatewayMock.getMockImplementation()!;
+      await callGatewayMock.withImplementation(
+        async (request) => {
+          if (request.method === "agent") {
+            const runId = request.params?.idempotencyKey ?? "";
+            const admission = prepareSystemAgentRunAdmission(cfg, runId, "main", "settle-test");
+            try {
+              const admitted = await admission.admit("embedded");
+              expect(admitted.executionIdentityToken?.runId).toBe(runId);
+              admittedRunIds.push(runId);
+            } catch (error) {
+              admissionErrors.push(String(error));
+              throw error;
+            } finally {
+              admission.close();
+            }
+          }
+          return ordinaryGatewayCall(request);
+        },
+        async () => {
+          for (const child of children) {
+            await fixture.spawnVisibleChild({ ...child, requesterTurnRunId: "requester-batch" });
+          }
+          if (children.length > 1) {
+            await createRequesterYieldTool(requesterSessionKey, "requester-batch").execute(
+              "yield",
+              {},
+            );
+          }
+          await fixture.settleTurn("requester-batch", children, children.length > 1);
+          for (const [index, child] of children.entries()) {
+            emitCompleted(child.runId, child.childSessionKey, `findings ${index}`);
+          }
+          await flushOwnedWork();
+          expect(admissionErrors).toEqual([]);
+          expect(admittedRunIds).toHaveLength(1);
+          for (const child of children) {
+            await waitForBatchCleanup(child.runId);
+          }
+          expectLargeRequesterWakeFindings(getAgentCalls().at(-1), children.length);
+          await registry.testing.sweepOnceForTests();
+          await flushOwnedWork();
+          expect(admittedRunIds).toHaveLength(1);
+        },
+      );
+    },
+  );
 
   it.each([
     ...["alpha", "beta"].flatMap((firstCompleted) =>
