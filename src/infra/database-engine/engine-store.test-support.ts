@@ -37,7 +37,7 @@ export function createPostgresEngineTestFixture(params: {
   const anchor = openNodeSqliteDatabase(path.join(params.directory, "anchor.sqlite"));
   const opened: PostgresSyncConnection[] = [];
   return {
-    open(schema = params.schema, existingVersion = false) {
+    open(this: void, schema = params.schema, existingVersion = false) {
       const db = openPostgresEngineTestStore({
         anchor,
         schema,
@@ -50,7 +50,7 @@ export function createPostgresEngineTestFixture(params: {
       opened.push(db);
       return db;
     },
-    invalidate() {
+    invalidate(this: void) {
       publishSqliteDatabaseSchemaChange(anchor);
     },
     [Symbol.dispose]() {
