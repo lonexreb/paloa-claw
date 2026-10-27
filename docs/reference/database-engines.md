@@ -434,7 +434,9 @@ from SQLite BM25. Punctuation runs are replaced by spaces before indexing and be
 parsing the query, so words inside dates, paths, file names, and `a/b` pairs match
 on both engines (`08` in `2026-08-18`, `server` in `server.py`); Unicode
 normalization still differs. Snippets use `ts_headline` only after a materialized, bounded candidate
-selection, with a word budget of 2–48, a character cap of 500, and empty highlight markers. Trigram
+selection, with a word budget of 2–48, a character cap of 500, and empty highlight markers. The headline
+parses the same punctuation split as the query to pick its passage, then returns that passage from
+the original text, so snippets keep their punctuation. Trigram
 contains uses its own GIN index and escaped literal `ILIKE`; it is not a universal
 fallback for full-text queries. Trigram matches rank by native `word_similarity`
 before the result limit; multi-term memory queries average their term scores.

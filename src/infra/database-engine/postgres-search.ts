@@ -64,7 +64,8 @@ export function bindPostgresSearch(
   assertPostgresSearchAdmitted(db, schema);
   const config = `${pgSearchName(getPostgresPhysicalFacts(db)!.namespace)}.${pgSearchName(searchConfig)}`;
   const extension = pgSearchName(schema.extensionSchema ?? "public");
-  const searchText = searchTextFor(getAdmittedPostgresSchema(db)?.postgresTextSearchVersion);
+  const textSearchVersion = getAdmittedPostgresSchema(db)?.postgresTextSearchVersion;
+  const searchText = searchTextFor(textSearchVersion);
   const store = {};
   const text = Object.fromEntries(
     Object.entries(schema.text ?? {}).map(([name, index]) => [name, { ...index, store }]),
@@ -145,7 +146,19 @@ export function bindPostgresSearch(
               throw new Error(`Text index has no field ${field}`);
             }
             const words = Math.max(1, Math.min(48, Math.trunc(maxTokens)));
-            return /* kysely-allow-raw: The native headline is bounded text from the admitted field. */ sql<string>`left(ts_headline(${sql.lit(config)}::regconfig, ${relation(index, field)}, ${requireQuery(query)}, ${`StartSel='', StopSel='', MaxWords=${words}, MinWords=1, MaxFragments=1, FragmentDelimiter=' … '`}), ${Math.max(1, Math.min(500, Math.trunc(maxChars)))})`;
+            const options = `StartSel='', StopSel='', MaxWords=${words}, MinWords=1, MaxFragments=1, FragmentDelimiter=' … '`;
+            const chars = Math.max(1, Math.min(500, Math.trunc(maxChars)));
+            const column = relation(index, field);
+            if (textSearchVersion !== 2) {
+              return /* kysely-allow-raw: The native headline is bounded text from the admitted field. */ sql<string>`left(ts_headline(${sql.lit(config)}::regconfig, ${column}, ${requireQuery(query)}, ${options}), ${chars})`;
+            }
+            // Version 2 queries split punctuation-joined words, so the headline must parse the
+            // same split to find the matching passage. Replacing each punctuation character with
+            // one space keeps character offsets, so the selected fragment is re-sliced from the
+            // original field and keeps its displayed punctuation.
+            const split = sql`regexp_replace(${column}, '[[:punct:]]', ' ', 'g')`;
+            const fragment = sql`ts_headline(${sql.lit(config)}::regconfig, ${split}, ${requireQuery(query)}, ${options})`;
+            return /* kysely-allow-raw: The native headline locates bounded text inside the admitted field. */ sql<string>`left(substr(${column}, strpos(${split}, ${fragment}), length(${fragment})), ${chars})`;
           },
           identity: (index) =>
             /* kysely-allow-raw: The declared source identity is the native numeric row identity. */ sql<number>`${relation(index, index.postgres!.identity)}`,
