@@ -7,7 +7,7 @@ import { formatCliCommand } from "../cli/command-format.js";
 import { resolveIsNixMode, resolveStateDir } from "../config/paths.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { hasConfiguredSecretInput } from "../config/types.secrets.js";
-import { resolveNodeLaunchAgentLabel } from "../daemon/constants.js";
+import { resolveNodeServiceIdentityEnvironment } from "../daemon/constants.js";
 import {
   detectLaunchAgentEnvFileJsonQuoteKeys,
   repairLaunchAgentEnvFileJsonQuotes,
@@ -19,6 +19,7 @@ import {
   launchAgentPlistExists,
   resolveLaunchAgentLabel,
 } from "../daemon/launchd.js";
+import { withGatewayServiceOperationLock } from "../daemon/service-operation-lock.js";
 import { resolveGatewayService } from "../daemon/service.js";
 import { runExec } from "../process/exec.js";
 import { shortenHomePath } from "../utils.js";
@@ -180,15 +181,22 @@ export async function maybeRepairMacGatewayServiceEnvQuotes(params: {
   }
   const env = params.env ?? process.env;
   const noteFn = params.noteFn ?? note;
-  const nodeLabel = resolveNodeLaunchAgentLabel();
-  const labels = [...new Set([resolveLaunchAgentLabel(env), nodeLabel])];
-  for (const label of labels) {
-    // A repaired node LaunchAgent is reloaded by `openclaw node restart`;
-    // a gateway restart leaves the node process on the corrupted values.
-    const restartCommand =
-      label === nodeLabel ? "openclaw node restart" : "openclaw gateway restart";
-    const serviceName = label === nodeLabel ? "node" : "gateway";
-    const detected = await detectLaunchAgentEnvFileJsonQuoteKeys(env, label).catch(() => null);
+  // The node identity comes from the same resolver its installer uses, so the
+  // active profile selects the right label, env file, and operation lock.
+  const services = [
+    { serviceName: "gateway", restartCommand: "openclaw gateway restart", serviceEnv: env },
+    {
+      serviceName: "node",
+      // A gateway restart leaves the node process on the corrupted values.
+      restartCommand: "openclaw node restart",
+      serviceEnv: { ...env, ...resolveNodeServiceIdentityEnvironment(env) },
+    },
+  ];
+  for (const { serviceName, restartCommand, serviceEnv } of services) {
+    const label = resolveLaunchAgentLabel(serviceEnv);
+    const detected = await detectLaunchAgentEnvFileJsonQuoteKeys(serviceEnv, label).catch(
+      () => null,
+    );
     if (!detected) {
       continue;
     }
@@ -218,7 +226,11 @@ export async function maybeRepairMacGatewayServiceEnvQuotes(params: {
     }
     let repaired: Awaited<ReturnType<typeof repairLaunchAgentEnvFileJsonQuotes>>;
     try {
-      repaired = await repairLaunchAgentEnvFileJsonQuotes(env, label, detected);
+      // Hold this service's lock from capture to publication so its own
+      // install or restart cannot rewrite the file mid-repair.
+      repaired = await withGatewayServiceOperationLock(serviceEnv, (assertCurrent) =>
+        repairLaunchAgentEnvFileJsonQuotes(serviceEnv, label, detected, assertCurrent),
+      );
     } catch (error) {
       // A failed publish must never read as a no-op: the repair keeps the
       // original content in a recovery copy and names it in the error.

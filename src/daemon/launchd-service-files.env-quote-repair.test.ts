@@ -20,7 +20,9 @@ const LABEL = "ai.openclaw.gateway";
 /** Repairs exactly what a doctor pass inspected, the only supported order. */
 async function inspectAndRepair(env: GatewayServiceEnv) {
   const inspected = await detectLaunchAgentEnvFileJsonQuoteKeys(env, LABEL);
-  return inspected ? await repairLaunchAgentEnvFileJsonQuotes(env, LABEL, inspected) : null;
+  return inspected
+    ? await repairLaunchAgentEnvFileJsonQuotes(env, LABEL, inspected, () => {})
+    : null;
 }
 
 async function writeEnvFile(lines: string[]): Promise<{
@@ -184,9 +186,9 @@ it("heals only the bytes doctor inspected, never a file rewritten after the prom
   ].join("\n");
   await fs.writeFile(envFilePath, rewritten, { encoding: "utf8", mode: 0o600 });
 
-  await expect(repairLaunchAgentEnvFileJsonQuotes(env, LABEL, inspected!)).rejects.toThrow(
-    /changed after doctor inspected it/,
-  );
+  await expect(
+    repairLaunchAgentEnvFileJsonQuotes(env, LABEL, inspected!, () => {}),
+  ).rejects.toThrow(/changed after doctor inspected it/);
   expect(await fs.readFile(envFilePath, "utf8")).toBe(rewritten);
   expect(await fs.readdir(path.dirname(envFilePath))).not.toContain(
     `${path.basename(envFilePath)}.openclaw-repair-backup`,

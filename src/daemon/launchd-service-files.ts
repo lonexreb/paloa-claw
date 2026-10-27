@@ -26,7 +26,6 @@ import { assertNoSystemLaunchDaemonOwnership } from "./launchd-system.js";
 import { formatLine, normalizeWindowsPathSeparators } from "./output.js";
 import { resolveDaemonHomeDir, resolveGatewayStateDir } from "./paths.js";
 import { resolveGatewaySupervisorLogPaths } from "./restart-logs.js";
-import { withGatewayServiceOperationLock } from "./service-operation-lock.js";
 import {
   publishServiceFile,
   matchesServiceFilePublication,
@@ -149,28 +148,27 @@ export async function detectLaunchAgentEnvFileJsonQuoteKeys(
  * managed-keys metadata existed heal too; callers gate the rewrite on the
  * doctor repair prompt, and the runtime reader stays lossless.
  *
- * The repair is bound to the inspection the operator confirmed and runs under
- * the gateway service-operation lock from capture to publication, so a
- * service install or update cannot interleave and its bytes are never healed
- * or clobbered by this rewrite.
+ * The repair is bound to the inspection the operator confirmed. The caller
+ * holds the service-operation lock of the service that owns this file from
+ * capture to publication and passes its currency check, so an install or
+ * restart of that service cannot interleave with the rewrite.
  */
 export async function repairLaunchAgentEnvFileJsonQuotes(
   env: GatewayServiceEnv,
   label: string,
   inspected: LaunchAgentEnvFileJsonQuoteInspection,
+  assertCurrent: () => void,
 ): Promise<{ envFilePath: string; healedKeys: string[] } | null> {
-  return await withGatewayServiceOperationLock(env, async (assertCurrent) => {
-    const file = await readLaunchAgentEnvFileContent(env, label);
-    if (!file) {
-      return null;
-    }
-    if (file.envFilePath !== inspected.envFilePath || file.content !== inspected.content) {
-      throw new Error(
-        "service env repair aborted before any change: the file changed after doctor inspected it; re-run doctor",
-      );
-    }
-    return await publishLaunchAgentEnvFileRepair(file, assertCurrent);
-  });
+  const file = await readLaunchAgentEnvFileContent(env, label);
+  if (!file) {
+    return null;
+  }
+  if (file.envFilePath !== inspected.envFilePath || file.content !== inspected.content) {
+    throw new Error(
+      "service env repair aborted before any change: the file changed after doctor inspected it; re-run doctor",
+    );
+  }
+  return await publishLaunchAgentEnvFileRepair(file, assertCurrent);
 }
 
 async function publishLaunchAgentEnvFileRepair(

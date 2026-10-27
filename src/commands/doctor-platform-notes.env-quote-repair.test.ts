@@ -3,10 +3,12 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
+import { resolveNodeLaunchAgentLabel } from "../daemon/constants.js";
 import { resolveLaunchAgentEnvFilePath } from "../daemon/launchd-service-files.js";
+import { withGatewayServiceOperationLock } from "../daemon/service-operation-lock.js";
 import type { GatewayServiceEnv } from "../daemon/service-types.js";
 import { maybeRepairMacGatewayServiceEnvQuotes } from "./doctor-platform-notes.js";
-import type { DoctorPrompter } from "./doctor-prompter.js";
+import { createDoctorPrompter, type DoctorPrompter } from "./doctor-prompter.js";
 
 // Every test directory is tracked, so a test that makes two still cleans both.
 const tempDirs = useAutoCleanupTempDirTracker(afterEach);
@@ -18,8 +20,12 @@ function makePrompter(accept: boolean): DoctorPrompter {
 
 async function seedCorruptedEnvFile(
   label = "ai.openclaw.gateway",
+  profile?: string,
 ): Promise<{ env: NodeJS.ProcessEnv; envFilePath: string }> {
-  const env = { OPENCLAW_STATE_DIR: await makeStateDir() } as NodeJS.ProcessEnv;
+  const env = {
+    OPENCLAW_STATE_DIR: await makeStateDir(),
+    ...(profile ? { OPENCLAW_PROFILE: profile } : {}),
+  } as NodeJS.ProcessEnv;
   const envFilePath = resolveLaunchAgentEnvFilePath(env as GatewayServiceEnv, label);
   await fs.mkdir(path.dirname(envFilePath), { recursive: true });
   await fs.writeFile(
@@ -71,23 +77,84 @@ it("names the node restart command after repairing the node service env file", a
   expect(await fs.readFile(envFilePath, "utf8")).toContain("export AWS_REGION='us-east-1'");
 });
 
-it("requires interactive confirmation so noninteractive --fix cannot auto-strip", async () => {
-  const { env } = await seedCorruptedEnvFile();
-  const prompter = makePrompter(true);
-
+it.each([
+  ["doctor --fix --non-interactive", { repair: true, nonInteractive: true }],
+  ["doctor --fix --yes", { repair: true, yes: true }],
+])("never strips values unattended (%s)", async (_label, options) => {
+  // The shape-based strip could alter a deliberately quoted value, so the
+  // real prompter must refuse it whenever no operator can answer.
+  const { env, envFilePath } = await seedCorruptedEnvFile();
+  const before = await fs.readFile(envFilePath, "utf8");
+  const runtime = {
+    log() {},
+    error() {},
+    exit(code: number): never {
+      throw new Error(`unexpected exit ${code}`);
+    },
+  };
+  const noteFn = vi.fn();
   await maybeRepairMacGatewayServiceEnvQuotes({
-    prompter,
+    prompter: createDoctorPrompter({ runtime, options } as Parameters<
+      typeof createDoctorPrompter
+    >[0]),
+    platform: "darwin",
+    env,
+    noteFn,
+  });
+  expect(noteFn.mock.calls.some(([text]) => String(text).includes("#103804"))).toBe(true);
+  expect(await fs.readFile(envFilePath, "utf8")).toBe(before);
+});
+
+it("repairs the named-profile node service env file", async () => {
+  // `openclaw --profile qaenvproof doctor` installs ai.openclaw.node.qaenvproof.
+  const label = resolveNodeLaunchAgentLabel("qaenvproof");
+  expect(label).toBe("ai.openclaw.node.qaenvproof");
+  const { env, envFilePath } = await seedCorruptedEnvFile(label, "qaenvproof");
+  const noteFn = vi.fn();
+  await maybeRepairMacGatewayServiceEnvQuotes({
+    prompter: makePrompter(true),
+    platform: "darwin",
+    env,
+    noteFn,
+  });
+  expect(noteFn.mock.calls.some(([text]) => String(text).includes("openclaw node restart"))).toBe(
+    true,
+  );
+  expect(await fs.readFile(envFilePath, "utf8")).toContain("export AWS_REGION='us-east-1'");
+});
+
+it("waits for the node service's own operation lock before repairing its env file", async () => {
+  const { env, envFilePath } = await seedCorruptedEnvFile("ai.openclaw.node");
+  const nodeEnv = { ...env, OPENCLAW_LAUNCHD_LABEL: "ai.openclaw.node" };
+  let release!: () => void;
+  let held!: () => void;
+  const lockHeld = new Promise<void>((resolve) => {
+    held = resolve;
+  });
+  // A node install/restart holds the node lock; doctor must not publish meanwhile.
+  const installer = withGatewayServiceOperationLock(nodeEnv, async () => {
+    held();
+    await new Promise<void>((resolve) => {
+      release = resolve;
+    });
+  });
+  await lockHeld;
+  let repaired = false;
+  const doctor = maybeRepairMacGatewayServiceEnvQuotes({
+    prompter: makePrompter(true),
     platform: "darwin",
     env,
     noteFn: vi.fn(),
+  }).then(() => (repaired = true));
+  await new Promise<void>((resolve) => {
+    setTimeout(resolve, 300);
   });
-
-  // The prompter contract: requiresInteractiveConfirmation blocks the
-  // shouldAutoApproveDoctorFix shortcut and declines when prompting is
-  // impossible, so an unattended doctor --fix never strips ambiguous values.
-  expect(prompter.confirmRuntimeRepair).toHaveBeenCalledWith(
-    expect.objectContaining({ requiresInteractiveConfirmation: true }),
-  );
+  expect(repaired).toBe(false);
+  expect(await fs.readFile(envFilePath, "utf8")).toContain(`AWS_REGION='"us-east-1"'`);
+  release();
+  await installer;
+  await doctor;
+  expect(await fs.readFile(envFilePath, "utf8")).toContain("export AWS_REGION='us-east-1'");
 });
 
 it("warns but leaves the file untouched when the operator declines", async () => {
