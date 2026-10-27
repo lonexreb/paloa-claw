@@ -36,6 +36,8 @@ describe.skipIf(!connection)("PostgreSQL index ordering migration", () => {
     (kind) => {
       withEngineStoreAdmission(() => {
         const currentSchema = kind === "state" ? stateEngineSchema : agentEngineSchema;
+        // Pin the non-null index ordering step; later steps (agent 35 and newer)
+        // keep their predecessor's search and vector versions out of this fixture.
         const migration = currentSchema.postgresMigrations?.find(
           (step) => step.version === (kind === "state" ? 32 : 34),
         );
@@ -46,6 +48,9 @@ describe.skipIf(!connection)("PostgreSQL index ordering migration", () => {
           ...currentSchema,
           ...migration.schema,
           version: migration.version,
+          postgresVectorDecoderVersion: migration.schema.postgresVectorDecoderVersion,
+          postgresVectorSearchVersion: migration.schema.postgresVectorSearchVersion,
+          postgresTextSearchVersion: migration.schema.postgresTextSearchVersion,
           postgresMigrations: currentSchema.postgresMigrations?.filter(
             (step) => step.version <= migration.version,
           ),
@@ -53,7 +58,10 @@ describe.skipIf(!connection)("PostgreSQL index ordering migration", () => {
         const source: StoreSchema = {
           ...target,
           ...migration.fromSchema,
-          version: target.version - 1,
+          version: migration.version - 1,
+          postgresVectorDecoderVersion: migration.fromSchema.postgresVectorDecoderVersion,
+          postgresVectorSearchVersion: migration.fromSchema.postgresVectorSearchVersion,
+          postgresTextSearchVersion: migration.fromSchema.postgresTextSearchVersion,
           postgresMigrations: [],
           postgresFragments: migration.fromSchema.postgresFragments?.map((fragment) =>
             fragment.id === "update_runs"

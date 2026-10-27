@@ -111,6 +111,8 @@ describe.skipIf(!connection)("PostgreSQL memory path index migration", () => {
         ...agentEngineSchema,
         ...step.schema,
         version,
+        // Later text-search steps must not leak their version into this historical fixture.
+        postgresTextSearchVersion: step.schema.postgresTextSearchVersion,
         postgresMigrations: agentEngineSchema.postgresMigrations?.filter(
           (item) => item.version <= version,
         ),
@@ -119,6 +121,7 @@ describe.skipIf(!connection)("PostgreSQL memory path index migration", () => {
         ...target,
         ...step.fromSchema,
         version: version - 1,
+        postgresTextSearchVersion: step.fromSchema.postgresTextSearchVersion,
         postgresMigrations: [],
       };
       using anchor = openNodeSqliteDatabase(

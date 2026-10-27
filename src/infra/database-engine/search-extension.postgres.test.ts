@@ -29,6 +29,7 @@ const schema: StoreSchema = {
   id: "search_extension",
   version: 1,
   sqlite: "",
+  postgresTextSearchVersion: 2,
   postgres: tables
     .map(
       (table) => `CREATE TABLE ${table} (
@@ -182,6 +183,40 @@ describe.skipIf(!connection)("PostgreSQL search extension admission", () => {
           .all(),
       ).toEqual([{ id: "one" }]);
       expectDefinitions("keywords-search", "keywords-archive-search");
+    });
+  });
+
+  // #183439: SQLite FTS5 unicode61 splits dates, paths and file names into words;
+  // PostgreSQL's parser kept them as single lexemes, so the same query missed.
+  it("matches words inside dates, paths and file names like SQLite FTS5", () => {
+    withEngineStoreAdmission(() => {
+      const search = admitStoreSearch(db, textSchema("keywords_archive"), {
+        extension: "keywords-archive-search",
+      });
+      db.runTransaction(() => {
+        db.prepare("INSERT INTO keywords_archive(id, ordinal, text) VALUES (?, ?, ?)").run(
+          "deploy",
+          1,
+          "Release went out on 2026-08-18 after the fix to server.py landed; the API serves /v1/models and the input/output schema is unchanged.",
+        );
+      });
+      const match = (text: string) =>
+        executeSqliteQuerySync(
+          db,
+          getNodeSqliteKysely<{ keywords_archive: { id: string } }>(db)
+            .selectFrom("keywords_archive")
+            .select("id")
+            .where(search.fullText!.match(search.text.body!, { kind: "term", text })),
+        ).rows;
+      for (const text of ["08 18", "server", "models", "input output", "server.py", "Release"]) {
+        expect(match(text), text).toEqual([{ id: "deploy" }]);
+      }
+      expect(match("grocery")).toEqual([]);
+      expect(
+        db
+          .prepare("SELECT openclaw_search::text AS vector FROM keywords_archive WHERE id = ?")
+          .get("deploy")?.vector,
+      ).not.toMatch(/'-08'|'server\.py'|'\/v1\/models'|'input\/output'/);
     });
   });
 
