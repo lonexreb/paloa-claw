@@ -3,7 +3,10 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
-import { resolveNodeLaunchAgentLabel } from "../daemon/constants.js";
+import {
+  resolveNodeLaunchAgentLabel,
+  resolveNodeServiceIdentityEnvironment,
+} from "../daemon/constants.js";
 import { resolveLaunchAgentEnvFilePath } from "../daemon/launchd-service-files.js";
 import { withGatewayServiceOperationLock } from "../daemon/service-operation-lock.js";
 import type { GatewayServiceEnv } from "../daemon/service-types.js";
@@ -125,7 +128,8 @@ it("repairs the named-profile node service env file", async () => {
 
 it("waits for the node service's own operation lock before repairing its env file", async () => {
   const { env, envFilePath } = await seedCorruptedEnvFile("ai.openclaw.node");
-  const nodeEnv = { ...env, OPENCLAW_LAUNCHD_LABEL: "ai.openclaw.node" };
+  // The installer's identity env, so the lock key matches on every host platform.
+  const nodeEnv = { ...env, ...resolveNodeServiceIdentityEnvironment(env) };
   let release!: () => void;
   let held!: () => void;
   const lockHeld = new Promise<void>((resolve) => {
